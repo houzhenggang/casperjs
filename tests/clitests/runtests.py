@@ -2,6 +2,7 @@
 
 import json
 import os
+import platform
 import select
 import signal
 import time
@@ -16,6 +17,7 @@ TEST_ROOT = os.path.abspath(os.path.dirname(__file__))
 CASPERJS_ROOT = os.path.abspath(os.path.join(TEST_ROOT, '..', '..'))
 CASPER_EXEC_FILE = sys.argv[1] if (len(sys.argv) == 2) else 'casperjs'
 CASPER_EXEC = os.path.join(CASPERJS_ROOT, 'bin', CASPER_EXEC_FILE)
+NEEDS_MONO = CASPER_EXEC.endswith('.exe') and platform.system() != 'Windows'
 ENGINE_EXEC = os.environ.get('ENGINE_EXECUTABLE',
                              os.environ.get('PHANTOMJS_EXECUTABLE',
                                             "phantomjs"))
@@ -139,6 +141,8 @@ class CasperExecTestBase(unittest.TestCase):
         failing = kwargs.get('failing', False)
         timeout = kwargs.get('timeout', BASE_TIMEOUT)
         cmd_args = [CASPER_EXEC, '--no-colors'] + cmd.split(' ')
+        if NEEDS_MONO:
+            cmd_args = ['mono'] + cmd_args;
         try:
             cmd = Command(cmd_args)
             out, err = cmd.run(timeout, stderr=subprocess.STDOUT)
@@ -168,6 +172,16 @@ class CasperExecTestBase(unittest.TestCase):
                 self.assertIn(entry, output)
         else:
             self.assertIn(what, self.runCommand(cmd))
+
+    def assertCommandOutputDoesNotContain(self, cmd, what, **kwargs):
+        if not what:
+            raise AssertionError('Empty lookup')
+        if isinstance(what, (list, tuple)):
+            output = self.runCommand(cmd, **kwargs)
+            for entry in what:
+                self.assertNotIn(entry, output)
+        else:
+            self.assertNotIn(what, self.runCommand(cmd))
 
 
 class BasicCommandsTest(CasperExecTestBase):
@@ -288,6 +302,31 @@ class ScriptOutputTest(CasperExecTestBase):
         self.assertCommandOutputEquals(script_path, 'it works')
 
 
+class ScriptOptionsTest(CasperExecTestBase):
+    def test_script_options(self):
+        script_path = os.path.join(TEST_ROOT, 'scripts', 'options.js')
+        # Specify a mix of engine and script options.
+        # --whoops is special in that it starts with --w, which is a phantomjs engine command.
+        #  At one time was mishandled in src/casperjs.cs.
+        script_path_script_args = script_path + ' --debug=no --load-images=no --whoops --this-is-a=test --max-disk-cache-size=1024'
+        self.assertCommandOutputContains(script_path_script_args, [
+            '    "whoops": true,',
+            '    "this-is-a": "test"',
+        ])
+
+    def test_engine_options(self):
+        script_path = os.path.join(TEST_ROOT, 'scripts', 'options.js')
+        # Specify a mix of engine and script options.
+        # --whoops is special in that it starts with --w, which is a phantomjs engine command.
+        #  At one time was mishandled in src/casperjs.cs.
+        script_path_script_args = script_path + ' --debug=no --load-images=no --whoops --this-is-a=test --max-disk-cache-size=1024'
+        self.assertCommandOutputDoesNotContain(script_path_script_args, [
+            '    "debug": "no",',
+            '    "load-images": "no",',
+            '    "max-disk-cache-size": 1024',
+        ])
+
+
 class ScriptErrorTest(CasperExecTestBase):
     def test_syntax_error(self):
         # phantomjs and slimerjs 'SyntaxError: Parse error'
@@ -343,8 +382,7 @@ class TestCommandOutputTest(CasperExecTestBase):
             '# true',
             'FAIL Subject is strictly true',
             '#    type: assert',
-            '#    file: %s:3' % script_path,
-            '#    code: test.assert(false);',
+            '#    file: %s' % script_path,
             '#    subject: false',
             'FAIL 1 test executed',
             '0 passed',
@@ -361,7 +399,7 @@ class TestCommandOutputTest(CasperExecTestBase):
             '# step throws',
             'FAIL Error: oops!',
             '#    type: uncaughtError',
-            '#    file: %s:5' % script_path,
+            '#    file: %s' % script_path,
             '#    error: oops!',
             'FAIL 1 test executed',
             '0 passed',
@@ -440,8 +478,7 @@ class TestCommandOutputTest(CasperExecTestBase):
             '# true',
             'FAIL Subject is strictly true',
             '#    type: assert',
-            '#    file: %s:3' % failing_script,
-            '#    code: test.assert(false);',
+            '#    file: %s' % failing_script,
             '#    subject: false',
             'Test file: %s' % mytest_script,
             'PASS ok1',
